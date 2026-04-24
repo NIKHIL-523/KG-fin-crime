@@ -4,7 +4,7 @@ Knowledge graph for financial crime — the PAI Hackathon 2026 project. Ports th
 
 ## Status
 
-**Pipeline + API complete. UI (step 1 — the last mile) is all that remains.**
+**Hero moment end-to-end — all 7 steps land.**
 
 ### Backwards build progress
 
@@ -14,9 +14,9 @@ Knowledge graph for financial crime — the PAI Hackathon 2026 project. Ports th
 | 6 | Bronze loaded | ✅ 5.08M txns / 515k KYC / 515k links via `src/bronze/load.py` |
 | 5 | Silver entities + edges | ✅ 9 tables populated via `src/silver/transform.py` (~15 min run) |
 | 4 | Silver assessment (circular-flow detector) | ✅ 109 rings (32 HIGH / 77 MEDIUM) via `src/assessments/circular_flow.py` (~4 min). Hero ring surfaces as finding_id 81, HIGH. |
-| 3 | Gold publisher | ✅ `gold.finding` (109) / `gold.finding_entity` (973) / `gold.finding_edge` (327) via `src/gold/publish.py` (<1s). Flattened summary_stats + control_mapping; party / bank / country denormalized onto entity rows. |
+| 3 | Gold publisher | ✅ `gold.finding` (109) / `gold.finding_entity` (973) / `gold.finding_edge` (327) via `src/gold/publish.py` (<1s). Flattened summary_stats + control_mapping; party / bank / country denormalized onto entity rows; `owner_party_id` on Account rows drives the party→account graph edges. |
 | 2 | FastAPI | ✅ `src/api/` — `GET /findings`, `/findings/{id}`, `/findings/{id}/graph`, `/healthz`. Serves `gold.*` only. |
-| 1 | UI renders finding | ⏳ **Next** |
+| 1 | UI renders finding | ✅ `ui/` — Vite + React + TS + Tailwind v4 + Cytoscape.js. Dark glass theme; pipeline header; filterable findings list; per-finding detail with stat strip, parties/controls/traversal cards, and the animated 3-hop ring graph (transfers_to + hasAccount + isHeldAt). |
 
 ### Resume commands
 
@@ -67,6 +67,8 @@ python -m silver.transform         # ~15 min (FK checks are per-row; one-time co
 python -m assessments.circular_flow  # ~4 min (3-way self-join on 5M edges)
 python -m gold.publish             # <1s (109 rows — flatten + denormalize)
 uvicorn api.main:app --reload      # FastAPI on http://127.0.0.1:8000 (docs at /docs)
+
+cd ui && npm install && npm run dev  # UI on http://127.0.0.1:5173 (proxies /api → :8000)
 ```
 
 To rebuild from a clean slate: `docker compose down -v` wipes the volume and all data, then re-run the cold-start sequence.
@@ -116,23 +118,33 @@ GET /findings/{id}/graph            → {entities:[...], edges:[...]} for the dr
 
 Hero-ring smoke test: `curl localhost:8000/findings/81/graph` → 9 entities (3 accounts, 3 banks, 3 parties with names/countries/risk tiers) + 3 edges.
 
-### Next session: step 1 — UI (hero moment)
+### UI layout
 
-**Goal.** Thinnest possible UI that renders the hero moment: a findings list (severity pills, title, countries, banks), a per-finding detail pane with the graph view showing **3 accounts × 3 banks × 3 countries** connected by 3 directed transfers. That is the 30 seconds the entire build serves.
+```
+ui/
+├── src/
+│   ├── App.tsx                        # shell: header + 2-pane grid
+│   ├── main.tsx                       # Vite entry
+│   ├── index.css                      # Tailwind v4 + theme tokens + glass/pulse utilities
+│   ├── lib/
+│   │   ├── api.ts                     # fetch wrapper → /api/*
+│   │   ├── types.ts                   # TS mirrors of the pydantic response models
+│   │   └── format.ts                  # money / date / hours / country-flag / currency-code
+│   └── components/
+│       ├── PipelineHeader.tsx         # CSV → Bronze → Silver → Gold → UI framing
+│       ├── FindingsList.tsx           # filterable left pane (ALL / HIGH / MEDIUM)
+│       ├── FindingCard.tsx            # list item: severity pill, amount, country flags, banks
+│       ├── SeverityPill.tsx           # severity-coloured pill w/ pulsing dot
+│       ├── FindingDetailPane.tsx      # right pane: hero header + stat strip + cards + graph
+│       └── RingGraph.tsx              # Cytoscape (cose-bilkent) with 3 edge types:
+│                                      #   transfers_to (cycle, bright arrows w/ amount labels)
+│                                      #   hasAccount   (dashed party → account)
+│                                      #   isHeldAt     (dashed account → bank)
+├── vite.config.ts                     # @ alias + /api → :8000 proxy + Tailwind plugin
+└── tsconfig.app.json                  # @ path mapping
+```
 
-Framework is still TBD (see `docs/architecture.md`). Candidates ranked by "thinnest-that-works":
-
-1. **Plain HTML + Alpine.js + a graph lib (Cytoscape.js / vis-network)** — zero build step, one `index.html`, fetches the API directly. Fastest path.
-2. **Vite + React + Cytoscape.js** — more ceremony but the graph-view component is easy to componentize. Pick if the UI grows past the hero moment.
-3. **SvelteKit / Next.js** — overkill for a thin view. Skip.
-
-Whatever wins, the hero moment only needs two screens:
-- **List view** — cards or rows for `/findings?severity=HIGH`, clicking one navigates to detail.
-- **Detail view** — left column: title, severity, amount range, 3 countries, 3 banks, control-mapping pills. Right column: the 3-node × 3-edge graph, Account nodes labelled with bank, hovering shows the Party owner (name + country + risk).
-
-Keep it under 500 lines. Polish is not scored — the graph rendering legibly is. The `/findings/{id}/graph` response is already shaped for Cytoscape ingestion (entity + edge lists).
-
-**Anti-goals** (already flagged in `demo/hero-moment.md`): auth, routing polish, theming, tooltips explaining the pipeline. Every hour on UI gloss is an hour not spent rehearsing the 30-second beat.
+The UI queries `/api/findings`, `/api/findings/{id}`, `/api/findings/{id}/graph` — all served from `gold.*` via FastAPI. No direct DB access, no silver/bronze reachability from the browser.
 
 ## Where to look
 
